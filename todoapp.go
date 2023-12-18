@@ -6,7 +6,10 @@ import (
 	"io/ioutil"
 	"os"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/AlecAivazis/survey/v2"
 )
 
 type Task struct {
@@ -18,6 +21,7 @@ type Task struct {
 }
 
 var tasks []Task
+
 const filename = "tasks.json"
 
 func addTask(text string, priority int, dueDate time.Time) {
@@ -31,6 +35,20 @@ func addTask(text string, priority int, dueDate time.Time) {
 	tasks = append(tasks, task)
 	fmt.Println("Задача добавлена:", task)
 	saveTasksToFile()
+}
+
+func editTask(id int, text string, priority int, dueDate time.Time) {
+	for i, task := range tasks {
+		if task.ID == id {
+			tasks[i].Text = text
+			tasks[i].Priority = priority
+			tasks[i].DueDate = dueDate
+			fmt.Println("Задача изменена:", tasks[i])
+			saveTasksToFile()
+			return
+		}
+	}
+	fmt.Println("Задача с ID", id, "не найдена.")
 }
 
 func deleteTask(id int) {
@@ -57,12 +75,15 @@ func markTaskCompleted(id int) {
 	fmt.Println("Задача с ID", id, "не найдена.")
 }
 
-func listTasks() {
+func listTasks(showCompleted bool) {
 	fmt.Println("Список задач:")
 	sort.Slice(tasks, func(i, j int) bool {
 		return tasks[i].DueDate.Before(tasks[j].DueDate)
 	})
 	for _, task := range tasks {
+		if !showCompleted && task.Completed {
+			continue
+		}
 		status := "Не выполнена"
 		if task.Completed {
 			status = "Выполнена"
@@ -99,58 +120,127 @@ func loadTasksFromFile() {
 	}
 }
 
+func parseDueDateInput(input string) (time.Time, error) {
+	formats := []string{"02.01.2006", "2006-01-02", "01/02/2006", "01-02-2006"}
+	for _, format := range formats {
+		parsedDate, err := time.Parse(format, input)
+		if err == nil {
+			return parsedDate, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("неверный формат даты")
+}
+
+func searchTasks(keywordsInput string) {
+	keywords := strings.Fields(keywordsInput)
+	matchedTasks := make([]Task, 0)
+
+	for _, task := range tasks {
+		taskTextLower := strings.ToLower(task.Text)
+		for _, keyword := range keywords {
+			keywordLower := strings.ToLower(keyword)
+			if strings.Contains(taskTextLower, keywordLower) {
+				matchedTasks = append(matchedTasks, task)
+				break
+			}
+		}
+	}
+
+	if len(matchedTasks) > 0 {
+		fmt.Println("Найденные задачи:")
+		for _, task := range matchedTasks {
+			status := "Не выполнена"
+			if task.Completed {
+				status = "Выполнена"
+			}
+			fmt.Printf("%d. %s (Приоритет: %d, Статус: %s, Срок: %s)\n",
+				task.ID, task.Text, task.Priority, status, task.DueDate.Format("02.01.2006"))
+		}
+	} else {
+		fmt.Println("Нет совпадений для введенных ключевых слов.")
+	}
+}
+
 func main() {
 	loadTasksFromFile()
 
 	for {
-		fmt.Println("\nВыберите действие:")
-		fmt.Println("1. Добавить задачу")
-		fmt.Println("2. Удалить задачу")
-		fmt.Println("3. Отметить задачу как выполненную")
-		fmt.Println("4. Вывести список задач")
-		fmt.Println("5. Сохранить и выйти")
-
-		var choice int
-		fmt.Print("Введите номер действия: ")
-		fmt.Scan(&choice)
+		prompt := &survey.Select{
+			Message: "Выберите действие:",
+			Options: []string{
+				"Добавить задачу",
+				"Редактировать задачу",
+				"Удалить задачу",
+				"Отметить задачу как выполненную",
+				"Вывести список задач",
+				"Вывести список выполненных задач",
+				"Поиск по ключевым словам",
+				"Сохранить и выйти",
+			},
+		}
+		var choice string
+		survey.AskOne(prompt, &choice)
 
 		switch choice {
-		case 1:
-			fmt.Print("Введите текст задачи: ")
-			var text string
-			fmt.Scanln()
-			fmt.Scan(&text)
-
-			fmt.Print("Введите приоритет (целое число): ")
+		case "Добавить задачу":
+			var text, dueDateInput string
 			var priority int
-			fmt.Scan(&priority)
 
-			fmt.Print("Введите срок выполнения (в формате DD.MM.YYYY): ")
-			var dueDateInput string
-			fmt.Scan(&dueDateInput)
-			dueDate, err := time.Parse("02.01.2006", dueDateInput)
+			survey.AskOne(&survey.Input{Message: "Введите текст задачи:"}, &text)
+			survey.AskOne(&survey.Input{Message: "Введите приоритет (целое число):"}, &priority)
+			survey.AskOne(&survey.Input{Message: "Введите срок выполнения (в формате DD.MM.YYYY):"}, &dueDateInput)
+
+			dueDate, err := parseDueDateInput(dueDateInput)
 			if err != nil {
 				fmt.Println("Ошибка ввода даты:", err)
 				continue
 			}
 
 			addTask(text, priority, dueDate)
-		case 2:
-			fmt.Print("Введите ID задачи для удаления: ")
+
+		case "Редактировать задачу":
+			var id, priority int
+			var text, dueDateInput string
+
+			survey.AskOne(&survey.Input{Message: "Введите ID задачи для редактирования:"}, &id)
+			survey.AskOne(&survey.Input{Message: "Введите новый текст задачи:"}, &text)
+			survey.AskOne(&survey.Input{Message: "Введите новый приоритет (целое число):"}, &priority)
+			survey.AskOne(&survey.Input{Message: "Введите новый срок выполнения (в формате DD.MM.YYYY):"}, &dueDateInput)
+
+			dueDate, err := parseDueDateInput(dueDateInput)
+			if err != nil {
+				fmt.Println("Ошибка ввода даты:", err)
+				continue
+			}
+
+			editTask(id, text, priority, dueDate)
+
+		case "Удалить задачу":
 			var id int
-			fmt.Scan(&id)
+			survey.AskOne(&survey.Input{Message: "Введите ID задачи для удаления:"}, &id)
 			deleteTask(id)
-		case 3:
-			fmt.Print("Введите ID задачи для отметки как выполненной: ")
+
+		case "Отметить задачу как выполненную":
 			var id int
-			fmt.Scan(&id)
+			survey.AskOne(&survey.Input{Message: "Введите ID задачи для отметки как выполненной:"}, &id)
 			markTaskCompleted(id)
-		case 4:
-			listTasks()
-		case 5:
+
+		case "Вывести список задач":
+			listTasks(false)
+
+		case "Вывести список выполненных задач":
+			listTasks(true)
+
+		case "Поиск по ключевым словам":
+			var keywordsInput string
+			survey.AskOne(&survey.Input{Message: "Введите ключевые слова для поиска:"}, &keywordsInput)
+			searchTasks(keywordsInput)
+
+		case "Сохранить и выйти":
 			fmt.Println("Сохранение данных и завершение программы.")
 			saveTasksToFile()
 			os.Exit(0)
+
 		default:
 			fmt.Println("Неверный выбор. Пожалуйста, выберите снова.")
 		}
